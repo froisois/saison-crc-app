@@ -45,7 +45,7 @@ import java.util.concurrent.Executors;
  * accès direct au fichier en ligne, presse-papiers, mise à jour. Les deux applis sont indépendantes.
  *
  * Contrat du pont : request(id, méthode, argument) ; la réponse revient par window.saisonAndroidReply(id, ok, valeur).
- * Méthodes : name, pick, read, write, spLogin, spRead, spWrite, copy, version, checkUpdate, update.
+ * Méthodes : name, pick, read, write, spLogin, spRead, spWrite, spCreate, copy, version, checkUpdate, update.
  */
 public class MainActivity extends Activity {
     private static final String HOTE = "froisois.github.io";
@@ -228,6 +228,18 @@ public class MainActivity extends Activity {
                             JSONObject o = new JSONObject(arg);
                             OneDriveWeb.ecrire(MainActivity.this, o.getString("url"), o.getString("text"), o.optString("etag"));
                             repondre(id, true, OneDriveWeb.lire(MainActivity.this, o.getString("url")).optString("etag"));
+                        }
+                        catch (OneDriveWeb.Exc e) { repondre(id, false, e.code + ":" + e.getMessage()); }
+                        catch (Exception e) { repondre(id, false, "reseau:" + message(e)); }
+                    });
+                    break;
+                case "spCreate":
+                    // saison.html déposé pour le PC, à côté de planning.md, la première fois
+                    reseau.execute(() -> {
+                        try {
+                            JSONObject o = new JSONObject(arg);
+                            OneDriveWeb.creer(MainActivity.this, o.getString("url"), o.getString("text"));
+                            repondre(id, true, "");
                         }
                         catch (OneDriveWeb.Exc e) { repondre(id, false, e.code + ":" + e.getMessage()); }
                         catch (Exception e) { repondre(id, false, "reseau:" + message(e)); }

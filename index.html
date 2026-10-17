@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="saison-page" content="20261017074211">
+<meta name="saison-page" content="20261017093824">
 <title>Saison</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23fff'/%3E%3Crect x='10' y='13' width='9' height='10' rx='2' fill='%23215E99'/%3E%3Crect x='23' y='15' width='31' height='6' rx='3' fill='%23215E99' fill-opacity='.35'/%3E%3Crect x='10' y='27' width='9' height='10' rx='2' fill='%23C8102E'/%3E%3Crect x='23' y='29' width='25' height='6' rx='3' fill='%23C8102E' fill-opacity='.35'/%3E%3Crect x='10' y='41' width='9' height='10' rx='2' fill='%233A7C22'/%3E%3Crect x='23' y='43' width='29' height='6' rx='3' fill='%233A7C22' fill-opacity='.35'/%3E%3C/svg%3E">
 <style>
@@ -194,7 +194,8 @@ sup {
   margin: 0.3rem 0;
   width: 100%;
 }
-#bandeau {
+#bandeau,
+#vbandeau {
   display: flex;
   gap: 1rem;
   align-items: center;
@@ -203,7 +204,12 @@ sup {
   background: #fff3d6;
   color: #5c4300;
 }
-#bandeau[hidden] {
+#vbandeau {
+  background: #e3eefa;
+  color: #173f68;
+}
+#bandeau[hidden],
+#vbandeau[hidden] {
   display: none;
 }
 
@@ -273,6 +279,10 @@ body.avec-fiche #principal {
   #bandeau {
     background: #2a2416;
     color: #e8cf94;
+  }
+  #vbandeau {
+    background: #16273a;
+    color: #b9d3f0;
   }
 }
 #controles[hidden] {
@@ -1036,6 +1046,7 @@ dialog h2 {
 </header>
 
 <div id="bandeau" hidden></div>
+<div id="vbandeau" class="bandeau" hidden></div>
 
 <main id="principal">
   <form id="ajout" autocomplete="off">
@@ -1544,6 +1555,11 @@ function merge3(B, M, T) {
     const vb = rb.get(k),
       vm = rm.get(k),
       vt = rt.get(k);
+    if (k === 'version' && vm && vt) {
+      /* tampon de la page déposée pour le PC : toujours le plus récent, jamais un conflit */
+      reglages.push(vm.val >= vt.val ? vm : vt);
+      continue;
+    }
     if (vm && vt) {
       if (vm.val === vt.val || vt.val === vb) reglages.push(vm);
       else if (vm.val === vb) reglages.push(vt);
@@ -2019,6 +2035,7 @@ function exporter() {
 }
 
 function setStatus() {
+  verifierVersionPC();
   const e = $('#etat');
   if (!e) return;
   let s;
@@ -2157,7 +2174,7 @@ function texteHorsHeures() {
 }
 
 /* ---- pont avec l'appli : request(id, méthode, argument) → saisonAndroidReply(id, ok, valeur) ---- */
-const ONEDRIVE_M = new Set(['read', 'write', 'pick', 'spLogin', 'spRead', 'spWrite']);
+const ONEDRIVE_M = new Set(['read', 'write', 'pick', 'spLogin', 'spRead', 'spWrite', 'spCreate']);
 let andSeq = 0;
 const andAppels = {};
 function andCallRaw(m, arg) {
@@ -2262,6 +2279,7 @@ async function chargerTel() {
     }
     /* le fichier vient de révéler son adresse en ligne : on passe à l'accès direct */
     if (backend === andBackend && adresseEnLigne() && !directRate) return chargerTel();
+    if (backend === spBackend) deposerPage().catch(() => {});
   } catch (e) {
     if (backend === spBackend && /^(introuvable|adresse|http):/.test(e.message)) {
       directRate = true;
@@ -2318,6 +2336,89 @@ function ouvrirCopie() {
   i.click();
 }
 
+/* ---- saison.html pour le PC : PC ↔ OneDrive ↔ Compagnon ↔ GitHub ----
+   Le PC n'ouvre que le saison.html du dossier OneDrive, à côté de planning.md ; il ne parle jamais à GitHub.
+   Le Compagnon, qui charge la page publiée, l'y dépose quand celle du dossier est plus ancienne, puis écrit son tampon
+   dans le réglage « version » de planning.md : le PC y voit qu'une nouvelle version l'attend (bandeau). */
+function tamponDe(html) {
+  return ((html || '').match(/<meta name="saison-page" content="(\d{14})">/) || [])[1] || '';
+}
+function monTampon() {
+  const v = ($('meta[name=saison-page]') || {}).content || '';
+  return /^\d{14}$/.test(v) ? v : '';
+}
+function adressePage() {
+  const u = adresseEnLigne();
+  return u ? u.replace(/[^/]+$/, 'saison.html') : '';
+}
+async function deposerPage() {
+  if (!AND || horsHeures() || backend !== spBackend) return false;
+  const moi = monTampon(),
+    url = adressePage();
+  if (!moi || !url) return false;
+  let deja = '';
+  try {
+    deja = localStorage.getItem('saison-page-deposee') || '';
+  } catch (e) {}
+  if (deja === moi && reglage('version') >= moi) return false;
+  const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
+  if (!r.ok) return false;
+  const html = await r.text();
+  if (tamponDe(html) !== moi) return false; /* la page en ligne a déjà changé : on recharge d'abord (verifierPage) */
+  let cur = null,
+    etag = '';
+  try {
+    const x = JSON.parse(await spCall('spRead', url));
+    cur = x.text;
+    etag = x.etag || '';
+  } catch (e) {
+    if (!/^introuvable:/.test(e.message)) throw e;
+  }
+  const la = tamponDe(cur);
+  if (la > moi) return false; /* le dossier a déjà plus récent */
+  if (la < moi) {
+    if (cur == null) await spCall('spCreate', JSON.stringify({ url, text: html }));
+    else await spCall('spWrite', JSON.stringify({ url, text: html, etag }));
+    toast('Nouvelle version de Saison déposée pour le PC');
+  }
+  try {
+    localStorage.setItem('saison-page-deposee', moi);
+  } catch (e) {}
+  if (reglage('version') < moi) {
+    doc.reglages = doc.reglages.filter(x => x.cle !== 'version');
+    doc.reglages.push({ cle: 'version', val: moi });
+    changed();
+  }
+  return la < moi ? 'deposee' : true;
+}
+/** Au PC : une version plus récente de saison.html attend dans le dossier (déposée par le Compagnon). */
+function verifierVersionPC() {
+  const b = $('#vbandeau');
+  if (!b || AND) return;
+  const moi = monTampon(),
+    la = reglage('version');
+  const plusRecente = !!(moi && la && la > moi);
+  b.hidden = !plusRecente;
+  if (plusRecente && !b.firstChild) {
+    b.innerHTML = '<span>Une nouvelle version de Saison est dans le dossier.</span>';
+    const k = document.createElement('button');
+    k.className = 'primaire';
+    k.textContent = 'Recharger';
+    k.title = 'Recharge la page (ton travail est déjà enregistré)';
+    k.onclick = async () => {
+      k.disabled = true;
+      if (dirty && backend) {
+        clearTimeout(changed.t);
+        try {
+          await syncSave();
+        } catch (e) {}
+      }
+      location.reload();
+    };
+    b.append(k);
+  }
+}
+
 /* ---- mise à jour de la page et de l'appli ---- */
 async function verifierPage() {
   if (!AND || verifierPage.at > Date.now() - 60000) return;
@@ -2357,6 +2458,7 @@ async function mettreAJourAppli() {
 /* ---- cycle de vie et bouton retour de l'appli ---- */
 window.saisonAndroidResume = () => {
   verifierPage();
+  if (backend === spBackend && !saving) deposerPage().catch(() => {});
   verifierAppli();
   if (!backend || saving) return chargerTel();
   if (dirty) syncSave();
