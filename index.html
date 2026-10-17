@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="saison-page" content="20261017073207">
+<meta name="saison-page" content="20261017074211">
 <title>Saison</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23fff'/%3E%3Crect x='10' y='13' width='9' height='10' rx='2' fill='%23215E99'/%3E%3Crect x='23' y='15' width='31' height='6' rx='3' fill='%23215E99' fill-opacity='.35'/%3E%3Crect x='10' y='27' width='9' height='10' rx='2' fill='%23C8102E'/%3E%3Crect x='23' y='29' width='25' height='6' rx='3' fill='%23C8102E' fill-opacity='.35'/%3E%3Crect x='10' y='41' width='9' height='10' rx='2' fill='%233A7C22'/%3E%3Crect x='23' y='43' width='29' height='6' rx='3' fill='%233A7C22' fill-opacity='.35'/%3E%3C/svg%3E">
 <style>
@@ -946,7 +946,34 @@ dialog h2 {
   }
 }
 
-/* ---------- téléphone (lecture) ---------- */
+/* ---------- adresse en ligne ---------- */
+#enLigne {
+  width: min(36rem, calc(100vw - 2rem));
+}
+#enLigne input {
+  width: 100%;
+  font: inherit;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--filet);
+  border-radius: 6px;
+  background: var(--fond);
+  color: inherit;
+}
+#elApercu {
+  min-height: 1.2em;
+  word-break: break-all;
+}
+#elApercu.erreur {
+  color: var(--rouge);
+}
+#enLigne .pied {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+}
+
+/* ---------- téléphone ---------- */
 @media (max-width: 700px) {
   #tete {
     flex-wrap: wrap;
@@ -999,7 +1026,10 @@ dialog h2 {
   <div id="menu" class="menu" role="menu" hidden>
     <button data-act="ouvrir" role="menuitem">Ouvrir un fichier…</button>
     <button data-act="nouveau" role="menuitem">Enregistrer dans un nouveau fichier…</button>
+    <button data-act="actualiser" role="menuitem" hidden>Actualiser</button>
     <button data-act="exporter" role="menuitem">Télécharger une copie</button>
+    <button data-act="enligne" role="menuitem">Adresse en ligne (téléphone)…</button>
+    <button id="mMaj" role="menuitem" hidden>Mettre à jour l’appli</button>
     <hr>
     <button data-act="aide" role="menuitem">Raccourcis clavier</button>
   </div>
@@ -1108,6 +1138,14 @@ dialog h2 {
   </dl>
   <p class="aide">Saisie rapide : jour, date, heure, titre, puis le lieu après @. Exemples : « sam 5 déc Masterclass @Bach », « 20/05-21/05 18h Pépinière musicale @CCED », « semaine du 24 mai Écrits de FM ».</p>
   <form method="dialog"><button class="primaire">Fermer</button></form>
+</dialog>
+
+<dialog id="enLigne" aria-label="Adresse en ligne">
+  <h2>Adresse en ligne de planning.md</h2>
+  <p class="aide">Elle permet à l’appli du téléphone de lire et d’écrire le fichier directement sur OneDrive. Ouvre le dossier de planning.md sur OneDrive dans le navigateur, et colle ici l’adresse de la barre d’adresse (celle du dossier suffit).</p>
+  <input id="elAdresse" placeholder="https://…sharepoint.com/personal/…/Documents/…" spellcheck="false" autocomplete="off">
+  <p id="elApercu" class="aide"></p>
+  <form method="dialog" class="pied"><button value="annuler">Annuler</button> <button id="elEnregistrer" class="primaire" value="ok">Enregistrer</button></form>
 </dialog>
 
 <div id="toast" role="status"></div>
@@ -1768,7 +1806,7 @@ function appliquer(r) {
 
 /** Enregistre : relit le fichier, fusionne s'il a changé ailleurs, puis écrit. */
 async function syncSave() {
-  if (!backend) return setStatus();
+  if (!backend || horsHeures()) return setStatus();
   if (saving) {
     saveAgain = true;
     return;
@@ -1826,7 +1864,7 @@ async function syncSave() {
 
 /** Relecture : le fichier a-t-il été modifié ailleurs (autre poste, téléphone, bloc-notes) ? */
 async function checkExternal() {
-  if (!backend || saving || dirty || editing()) return;
+  if (!backend || saving || dirty || editing() || horsHeures()) return;
   try {
     if (backend.changedSince && !(await backend.changedSince())) return;
     const cur = await backend.read();
@@ -1849,7 +1887,15 @@ function editing() {
   return !!a && /^(INPUT|TEXTAREA)$/.test(a.tagName) && a.id !== 'ajoutTxt';
 }
 
+/** Le fichier est-il accessible en écriture (PC : poignée et permission ; appli : un fichier choisi) ? */
+function pret() {
+  return AND ? !!backendTel() : !!(fileHandle && permOK);
+}
 async function saveFile() {
+  if (AND) {
+    backend = backendTel();
+    return syncSave();
+  }
   if (!fileHandle || !permOK) return setStatus();
   backend = pcBackend;
   await syncSave();
@@ -1884,7 +1930,8 @@ async function reprendre() {
 }
 const TYPES = [{ description: 'Planning Markdown', accept: { 'text/markdown': ['.md', '.txt'] } }];
 async function ouvrirFichier() {
-  if (!hasFS) return toast('Ce navigateur ne sait pas ouvrir de fichier : utilise Edge');
+  if (AND) return choisirTel();
+  if (!hasFS) return ouvrirCopie();
   try {
     const [h] = await showOpenFilePicker({ types: TYPES });
     const enAttente = dirty && ouvert;
@@ -1975,9 +2022,20 @@ function setStatus() {
   const e = $('#etat');
   if (!e) return;
   let s;
-  if (!ouvert) s = '';
-  else if (!hasFS) s = 'Gardé dans ce navigateur seulement';
-  else if (!fileHandle) s = 'Pas encore de fichier · gardé dans ce navigateur';
+  if (!ouvert) s = AND && !backendTel() ? 'Aucun fichier choisi' : '';
+  else if (AND) {
+    const b = backendTel();
+    if (!b) s = 'Pas encore de fichier · gardé dans l’appli';
+    else if (horsHeures()) s = (dirty ? 'Modifications en attente · ' : '') + texteHorsHeures();
+    else if (saveErr) s = '⚠ ' + saveErr;
+    else s = (dirty ? 'Enregistrement… ' : 'Enregistré · ') + (b.direct ? 'en ligne' : andNom);
+  } else if (!hasFS) {
+    let de = '';
+    try {
+      de = localStorage.getItem('saison-copie-de') || '';
+    } catch (e) {}
+    s = (de ? 'Copie de ' + de : 'Copie') + ' · les modifications restent dans ce navigateur';
+  } else if (!fileHandle) s = 'Pas encore de fichier · gardé dans ce navigateur';
   else if (!permOK) s = 'En attente : ' + fileHandle.name;
   else if (saveErr) s = '⚠ ' + fileHandle.name + ' : ' + saveErr;
   else s = (dirty ? 'Enregistrement… ' : 'Enregistré · ') + fileHandle.name;
@@ -2000,6 +2058,336 @@ function bandeau(texte, bouton, fn) {
   }
   b.hidden = false;
 }
+/* 04b-telephone.js : le téléphone.
+   Dans le Compagnon (pont « SaisonAndroid ») : planning.md choisi par l'appli OneDrive du téléphone, puis lu et écrit
+   directement en ligne (session web) dès que le réglage « en ligne » donne son adresse ; jamais hors des heures de
+   travail. Repris de Tâches (08-telephone.js, 11-telephone-ecrans.js, 14/10/2026) et simplifié.
+   Dans un navigateur sans accès aux fichiers : on ouvre une copie (lecture), gardée dans ce navigateur. */
+
+const AND = window.SaisonAndroid || null;
+const TACTILE = !!AND || matchMedia('(pointer: coarse)').matches;
+let andNom = ''; /* nom du fichier choisi dans l'appli OneDrive ('' = aucun) */
+
+/* ---- heures de travail : rien n'est lu ni envoyé à OneDrive en dehors ---- */
+const TRAVAIL_DE = 9 * 60,
+  TRAVAIL_A = 18 * 60 + 30;
+function maintenant() {
+  return window.__now ? new Date(window.__now) : new Date();
+}
+function paques(y) {
+  const a = y % 19,
+    b = Math.floor(y / 100),
+    c = y % 100,
+    d = Math.floor(b / 4),
+    e = b % 4,
+    f = Math.floor((b + 8) / 25),
+    g = Math.floor((b - f + 1) / 3),
+    h = (19 * a + b - d - g + 15) % 30,
+    i = Math.floor(c / 4),
+    k = c % 4,
+    l = (32 + 2 * e + 2 * i - h - k) % 7,
+    m = Math.floor((a + 11 * h + 22 * l) / 451),
+    mo = Math.floor((h + l - 7 * m + 114) / 31),
+    da = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(y, mo - 1, da, 12);
+}
+/** Raison pour laquelle ce jour n'est pas travaillé, ou ''. Mêmes règles que Tâches. */
+function jourChome(d) {
+  const iso = isoDe(d),
+    md = iso.slice(5),
+    wd = d.getDay();
+  if (wd === 0 || wd === 6) return 'week-end';
+  const fixes = {
+    '01-01': 'jour de l’An',
+    '05-01': '1er Mai',
+    '05-08': '8 Mai',
+    '07-14': '14 Juillet',
+    '08-15': '15 Août',
+    '11-01': 'Toussaint',
+    '11-11': '11 Novembre',
+    '12-25': 'Noël'
+  };
+  if (fixes[md]) return fixes[md];
+  const P = isoDe(paques(d.getFullYear()));
+  if (iso === plusJours(P, 1)) return 'lundi de Pâques';
+  if (iso === plusJours(P, 39)) return 'Ascension';
+  if (iso === plusJours(P, 50)) return 'lundi de Pentecôte';
+  if (md >= '07-14' && md <= '08-15') return 'congés d’été';
+  /* vacances de Noël : les deux semaines avant le lundi de reprise (premier lundi à partir du 2 janvier) */
+  for (const y of [d.getFullYear(), d.getFullYear() + 1]) {
+    const r = new Date(y, 0, 2, 12);
+    while (r.getDay() !== 1) r.setDate(r.getDate() + 1);
+    const debut = new Date(r);
+    debut.setDate(debut.getDate() - 16);
+    if (d >= debut && d < r) return 'vacances de Noël';
+  }
+  return '';
+}
+function heuresTravail(now) {
+  if (window.__toujours) return true;
+  now = now || maintenant();
+  const t = now.getHours() * 60 + now.getMinutes();
+  return !jourChome(now) && t >= TRAVAIL_DE && t < TRAVAIL_A;
+}
+function horsHeures() {
+  return !!AND && !heuresTravail();
+}
+function texteReprise() {
+  const now = maintenant(),
+    d = new Date(now);
+  if (now.getHours() * 60 + now.getMinutes() >= TRAVAIL_DE || jourChome(d)) d.setDate(d.getDate() + 1);
+  for (let k = 0; k < 60 && jourChome(d); k++) d.setDate(d.getDate() + 1);
+  const n = ecartJours(isoDe(now), isoDe(d));
+  return (
+    (n === 0
+      ? 'aujourd’hui'
+      : n === 1
+        ? 'demain'
+        : n < 7
+          ? JOURS[d.getDay()]
+          : 'le ' + JOURS[d.getDay()] + ' ' + jourMois(d)) +
+    ' à 9' +
+    NBSP +
+    'h'
+  );
+}
+function texteHorsHeures() {
+  const r = jourChome(maintenant());
+  return 'Hors des heures de travail' + (r && r !== 'week-end' ? ' (' + r + ')' : '') + ' : envoi ' + texteReprise();
+}
+
+/* ---- pont avec l'appli : request(id, méthode, argument) → saisonAndroidReply(id, ok, valeur) ---- */
+const ONEDRIVE_M = new Set(['read', 'write', 'pick', 'spLogin', 'spRead', 'spWrite']);
+let andSeq = 0;
+const andAppels = {};
+function andCallRaw(m, arg) {
+  return new Promise((res, rej) => {
+    const id = ++andSeq;
+    andAppels[id] = { res, rej };
+    try {
+      AND.request(id, m, arg == null ? '' : String(arg));
+    } catch (e) {
+      delete andAppels[id];
+      rej(e);
+    }
+  });
+}
+function andCall(m, arg) {
+  if (ONEDRIVE_M.has(m) && horsHeures()) return Promise.reject(new Error('horsplage:' + texteHorsHeures()));
+  return andCallRaw(m, arg);
+}
+window.saisonAndroidReply = (id, ok, val) => {
+  const c = andAppels[id];
+  if (!c) return;
+  delete andAppels[id];
+  if (ok) c.res(val);
+  else c.rej(new Error(val || 'erreur'));
+};
+
+/* ---- adresse en ligne de planning.md (réglage « en ligne ») ---- */
+/**
+ * Accepte l'adresse du fichier ou de son dossier, copiée depuis la barre d'adresse de OneDrive :
+ * …/personal/x/Documents/Dossier/planning.md, un lien « /:f:/r/ » ou « /:t:/r/ », ou « …/my?id=%2Fpersonal%2F… ».
+ * Renvoie l'adresse du fichier, ou '' si elle n'est pas reconnue.
+ */
+function adresseFichier(saisie, nom) {
+  let u = (saisie || '').trim();
+  const m = /^(https:\/\/[^/]+)\/.*[?&]id=([^&#]+)/.exec(u);
+  if (m) u = m[1] + decodeURIComponent(m[2]);
+  u = u
+    .replace(/\/:[a-z]:\/[a-z](?=\/)/i, '')
+    .replace(/[?#].*$/, '')
+    .replace(/\/+$/, '');
+  if (!/^https:\/\/[^/]+\.sharepoint\.com\/(personal|sites)\/[^/]+\/.+/i.test(u)) return '';
+  u = decodeURI(u);
+  if (!/\.(md|txt)$/i.test(u)) u += '/' + (nom || 'planning.md');
+  return encodeURI(u);
+}
+function adresseEnLigne() {
+  return reglage('en ligne');
+}
+
+/* ---- accès au fichier depuis le téléphone ---- */
+const andBackend = {
+  read: () => andCall('read'),
+  write: t => andCall('write', t)
+};
+let spEtag = '';
+async function spCall(m, arg) {
+  try {
+    return await andCall(m, arg);
+  } catch (e) {
+    if (!/^connexion:/.test(e.message) || document.hidden) throw e; /* en arrière-plan : au retour */
+    toast('Connexion à OneDrive…');
+    await andCall('spLogin', adresseEnLigne().replace(/^(https:\/\/[^/]+\/(personal|sites)\/[^/]+).*$/, '$1'));
+    return await andCall(m, arg);
+  }
+}
+const spBackend = {
+  async read() {
+    const r = JSON.parse(await spCall('spRead', adresseEnLigne()));
+    spEtag = r.etag || '';
+    return r.text;
+  },
+  async write(t) {
+    spEtag = (await spCall('spWrite', JSON.stringify({ url: adresseEnLigne(), text: t, etag: spEtag }))) || '';
+  },
+  direct: true
+};
+let directRate = false; /* l'accès direct a échoué (adresse fausse, fichier introuvable) : on reste sur l'appli OneDrive */
+function backendTel() {
+  if (adresseEnLigne() && !directRate) return spBackend;
+  return andNom ? andBackend : null;
+}
+
+/** Lit le fichier et remplace le planning affiché (au démarrage, au choix du fichier, en actualisant). */
+async function chargerTel() {
+  backend = backendTel();
+  if (!backend) return setStatus();
+  if (horsHeures()) return setStatus();
+  try {
+    if (dirty) {
+      await syncSave();
+    } else {
+      const t = backend === andBackend ? await andCall('read', 'frais') : await backend.read();
+      if (t !== baseText && t.trim() && !staleEcho(t)) {
+        doc = parse(t);
+        baseText = t;
+        ouvert = true;
+        backup();
+        toutAfficher();
+      }
+      saveErr = null;
+      savedAt = Date.now();
+    }
+    /* le fichier vient de révéler son adresse en ligne : on passe à l'accès direct */
+    if (backend === andBackend && adresseEnLigne() && !directRate) return chargerTel();
+  } catch (e) {
+    if (backend === spBackend && /^(introuvable|adresse|http):/.test(e.message)) {
+      directRate = true;
+      toast(
+        'Accès direct impossible (' + e.message.replace(/^\w+:/, '') + ') : lecture par l’appli OneDrive',
+        null,
+        null,
+        6000
+      );
+      return chargerTel();
+    }
+    if (!/^horsplage:/.test(e.message)) saveErr = e.message.replace(/^\w+:/, '');
+  }
+  setStatus();
+}
+async function choisirTel() {
+  if (horsHeures()) return toast(texteHorsHeures());
+  try {
+    andNom = await andCall('pick');
+    directRate = false;
+    baseText = null;
+    dirty = dirty && ouvert;
+    await chargerTel();
+    toast('Ouvert : ' + andNom);
+  } catch (e) {
+    if (!/annulé/.test(e.message)) toast(e.message.replace(/^\w+:/, ''));
+  }
+}
+
+/* ---- navigateur sans accès aux fichiers (téléphone, Firefox) : on ouvre une copie ---- */
+function ouvrirCopie() {
+  const i = document.createElement('input');
+  i.type = 'file';
+  i.accept = '.md,.txt,text/markdown,text/plain';
+  i.onchange = async () => {
+    const f = i.files[0];
+    if (!f) return;
+    if (ouvert) snapshot();
+    doc = parse(await f.text());
+    baseText = null;
+    dirty = false;
+    ouvert = true;
+    try {
+      localStorage.setItem(
+        'saison-copie-de',
+        f.name + ' · ' + new Date().toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })
+      );
+    } catch (e) {}
+    backup();
+    toutAfficher();
+    setStatus();
+    toast('Copie ouverte : ' + f.name);
+  };
+  i.click();
+}
+
+/* ---- mise à jour de la page et de l'appli ---- */
+async function verifierPage() {
+  if (!AND || verifierPage.at > Date.now() - 60000) return;
+  verifierPage.at = Date.now();
+  try {
+    const t = await (await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' })).text();
+    const v = (/<meta name="saison-page" content="(\d+)"/.exec(t) || [])[1];
+    const ici = ($('meta[name=saison-page]') || {}).content;
+    if (v && ici && v !== ici && !/^_/.test(ici)) {
+      if (dirty && backend && !horsHeures()) await syncSave();
+      try {
+        localStorage.setItem('saison-page-maj', ici);
+      } catch (e) {}
+      location.reload();
+    }
+  } catch (e) {}
+}
+let appliAJour = null; /* numéro publié si plus récent que celui installé */
+async function verifierAppli() {
+  if (!AND || verifierAppli.at > Date.now() - 6 * 3600e3) return;
+  verifierAppli.at = Date.now();
+  try {
+    const [ici, la] = await Promise.all([andCallRaw('version'), andCallRaw('checkUpdate')]);
+    appliAJour = +la > +ici ? +la : null;
+    $('#mMaj').hidden = !appliAJour;
+  } catch (e) {}
+}
+async function mettreAJourAppli() {
+  try {
+    toast('Téléchargement de la nouvelle version…', null, null, 20000);
+    await andCallRaw('update');
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+/* ---- cycle de vie et bouton retour de l'appli ---- */
+window.saisonAndroidResume = () => {
+  verifierPage();
+  verifierAppli();
+  if (!backend || saving) return chargerTel();
+  if (dirty) syncSave();
+  else checkExternal();
+};
+window.saisonAndroidPause = () => {
+  if (dirty && backend && !horsHeures()) {
+    clearTimeout(changed.t);
+    syncSave();
+  }
+};
+window.saisonAndroidBack = () => {
+  const d = $('dialog[open]');
+  if (d) {
+    d.close();
+    return true;
+  }
+  if (!$('#menu').hidden) {
+    $('#menu').hidden = true;
+    return true;
+  }
+  if (!$('#affiche').hidden) {
+    fermerAffiche();
+    return true;
+  }
+  if (selId) {
+    fermerFiche();
+    return true;
+  }
+  return false;
+};
 /* 05-saisie.js : saisie rapide en une ligne. Sans DOM : testée dans node (tests/modele.test.mjs).
    « ven 27 nov 18h Carte blanche @Bach », « 20-21/05 18h Pépinière musicale @CCED »,
    « semaine du 24 mai Écrits de FM », « du 21 au 27 février OHEL @CCED », « 6/03 10h30-12h30 Petit déjeuner » */
@@ -2436,7 +2824,7 @@ function ouvrirFiche(id) {
   $$('.ev.sel').forEach(x => x.classList.remove('sel'));
   const li = $('.ev[data-id="' + id + '"]');
   if (li) li.classList.add('sel');
-  $('#fTitre').focus();
+  if (!TACTILE) $('#fTitre').focus(); /* au téléphone, pas de clavier qui surgit à l'ouverture */
 }
 function fermerFiche() {
   const id = selId;
@@ -3055,6 +3443,12 @@ function afficherMail() {
   $('#mailApercu').innerHTML = htmlMail(p, $('#mailAvenir').checked);
 }
 async function copierRiche(html, texte) {
+  if (AND) {
+    try {
+      await andCallRaw('copy', JSON.stringify({ text: texte, html }));
+      return true;
+    } catch (e) {}
+  }
   try {
     await navigator.clipboard.write([
       new ClipboardItem({
@@ -3091,12 +3485,8 @@ function initMail() {
     );
   };
   $('#mailCopierObjet').onclick = async () => {
-    try {
-      await navigator.clipboard.writeText($('#mailObjet').textContent);
-      toast('Objet copié');
-    } catch (e) {
-      toast('Copie impossible');
-    }
+    const t = $('#mailObjet').textContent;
+    toast((await copierRiche(esc(t), t)) ? 'Objet copié' : 'Copie impossible');
   };
 }
 /* 09-demarrage.js : boutons, raccourcis, démarrage. */
@@ -3108,6 +3498,20 @@ function initBoutons() {
   $('#bMail').onclick = ouvrirMail;
   $('#vOuvrir').onclick = ouvrirFichier;
   $('#vNouveau').onclick = () => (hasFS ? nouveauFichier() : nouveauPlanning());
+  if (AND) {
+    $('#vOuvrir').textContent = 'Choisir planning.md dans OneDrive';
+    $('#vNouveau').hidden = true;
+    $('[data-act=ouvrir]').textContent = 'Choisir un autre fichier…';
+    $('[data-act=nouveau]').hidden = true;
+    $('[data-act=actualiser]').hidden = false;
+  } else if (!hasFS) {
+    $('#vOuvrir').textContent = 'Ouvrir une copie de planning.md';
+    $('[data-act=ouvrir]').textContent = 'Ouvrir une copie…';
+    $('[data-act=nouveau]').hidden = true;
+  }
+  if (TACTILE) $('[data-act=aide]').hidden = true; /* pas de clavier : pas de raccourcis */
+  $('#mMaj').onclick = mettreAJourAppli;
+  initEnLigne();
   const menu = $('#menu');
   $('#bMenu').onclick = ev => {
     ev.stopPropagation();
@@ -3118,7 +3522,14 @@ function initBoutons() {
     const a = ev.target.closest('[data-act]');
     if (!a) return;
     menu.hidden = true;
-    ({ ouvrir: ouvrirFichier, nouveau: nouveauFichier, exporter, aide: () => $('#aide').showModal() })[a.dataset.act]();
+    ({
+      ouvrir: ouvrirFichier,
+      nouveau: nouveauFichier,
+      exporter,
+      enligne: ouvrirEnLigne,
+      actualiser: () => (horsHeures() ? toast(texteHorsHeures()) : chargerTel().then(() => toast('Actualisé'))),
+      aide: () => $('#aide').showModal()
+    })[a.dataset.act]();
   });
 }
 
@@ -3181,7 +3592,21 @@ async function demarrer() {
   changerVersion(version);
   restaurer();
   toutAfficher();
-  if (hasFS) {
+  if (AND) {
+    document.body.classList.add('appli');
+    try {
+      andNom = await andCallRaw('name');
+    } catch (e) {}
+    await chargerTel();
+    try {
+      if (localStorage.getItem('saison-page-maj')) {
+        localStorage.removeItem('saison-page-maj');
+        toast('Page mise à jour');
+      }
+    } catch (e) {}
+    verifierPage();
+    verifierAppli();
+  } else if (hasFS) {
     try {
       const h = await idbGet('poignee');
       if (h) {
@@ -3200,15 +3625,49 @@ async function demarrer() {
   addEventListener('focus', () => checkExternal());
   document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && checkExternal());
   setInterval(() => {
-    if (dirty && !saving && fileHandle && permOK) saveFile();
+    if (dirty && !saving && pret()) saveFile();
     else checkExternal();
   }, 30000);
   addEventListener('beforeunload', ev => {
-    if (dirty && fileHandle && permOK) {
+    if (dirty && pret() && !AND) {
       saveFile();
       ev.preventDefault();
     }
   });
+}
+/* ---- adresse en ligne de planning.md : ce qui permet au téléphone de lire et d'écrire le fichier directement ---- */
+function ouvrirEnLigne() {
+  if (!ouvert) return toast('Ouvre d’abord le planning');
+  $('#elAdresse').value = adresseEnLigne();
+  $('#elApercu').textContent = '';
+  $('#enLigne').showModal();
+}
+function initEnLigne() {
+  const champ = $('#elAdresse'),
+    apercu = $('#elApercu');
+  const lire = () => adresseFichier(champ.value, fileHandle ? fileHandle.name : 'planning.md');
+  champ.oninput = () => {
+    const u = lire();
+    apercu.textContent = !champ.value.trim()
+      ? ''
+      : u
+        ? 'Fichier : ' + decodeURI(u)
+        : 'Adresse non reconnue : il faut une adresse de OneDrive (…sharepoint.com/personal/…).';
+    apercu.classList.toggle('erreur', !!champ.value.trim() && !u);
+  };
+  $('#elEnregistrer').onclick = ev => {
+    const u = champ.value.trim() ? lire() : '';
+    if (champ.value.trim() && !u) {
+      ev.preventDefault();
+      return champ.oninput();
+    }
+    if (u === adresseEnLigne()) return;
+    snapshot();
+    doc.reglages = doc.reglages.filter(r => r.cle !== 'en ligne');
+    if (u) doc.reglages.push({ cle: 'en ligne', val: u });
+    changed();
+    toast(u ? 'Adresse enregistrée : le téléphone lira le fichier en ligne' : 'Adresse retirée');
+  };
 }
 demarrer();
 </script>
